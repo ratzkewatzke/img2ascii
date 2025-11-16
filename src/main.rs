@@ -7,6 +7,9 @@ enum Charset {
     Short,
     Long,
     Braille,
+    VerticalBlocks,
+    VerticalHorizontalBlocks,
+    ShadeBlocks,
     Custom,
 }
 
@@ -119,15 +122,18 @@ fn main() {
     let mut working_chars: Vec<_> = match args.charset {
         Charset::Short => " .:-=+#%@".to_string(),
         Charset::Long => {
-            " .'^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$".to_string()
-        }
+                " .'^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$".to_string()
+            }
         Charset::Braille => {
-            "⠀⠁⠂⠃⠄⠅⠆⠇⠈⠉⠊⠋⠌⠍⠎⠏⠐⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟⠠⠡⠢⠣⠤⠥⠦⠧⠨⠩⠪⠫⠬⠭⠮⠯⠰⠱⠲⠳⠴⠵⠶⠷⠸⠹⠺⠻⠼⠽⠾⠿".to_string()
-        }
+                "⠀⠁⠂⠄⠈⠐⠠⡀⢀⣀⠃⠅⠆⠉⠊⠌⠑⠒⠔⠘⠡⠢⠤⠨⠰⡁⡂⡄⡈⡐⡠⢁⢂⢄⢈⢐⢠⣁⣂⣄⣈⣐⣠⠇⠋⠍⠎⠓⠕⠖⠙⠚⠜⠣⠥⠦⠩⠪⠬⠱⠲⠴⠸⡃⡅⡆⡉⡊⡌⡑⡒⡔⡘⡡⡢⡤⡨⡰⢃⢅⢆⢉⢊⢌⢑⢒⢔⢘⢡⢢⢤⢨⢰⣃⣅⣆⣉⣊⣌⣑⣒⣔⣘⣡⣢⣤⣨⣰⠏⠗⠛⠝⠞⠫⠭⠮⠳⠵⠶⠹⠺⠼⡇⡋⡍⡎⡓⡕⡖⡙⡚⡜⡣⡥⡦⡩⡪⡬⡱⡲⡴⡸⢇⢋⢍⢎⢓⢕⢖⢙⢚⢜⢣⢥⢦⢩⢪⢬⢱⢲⢴⢸⣇⣋⣍⣎⣓⣕⣖⣙⣚⣜⣣⣥⣦⣩⣪⣬⣱⣲⣴⣸⠟⠯⠷⠻⠽⠾⡏⡗⡛⡝⡞⡫⡭⡮⡳⡵⡶⡹⡺⡼⢏⢗⢛⢝⢞⢫⢭⢮⢳⢵⢶⢹⢺⢼⣏⣗⣛⣝⣞⣫⣭⣮⣳⣵⣶⣹⣺⣼⠿⡟⡯⡷⡻⡽⡾⢟⢯⢷⢻⢽⢾⣟⣯⣷⣻⣽⣾⡿⢿⣿".to_string()
+            }
+        Charset::VerticalBlocks => " ▁▂▃▄▅▆▇█".to_string(),
+        Charset::VerticalHorizontalBlocks => " ▁▂▃▄▅▆▇▏▎▍▌▋▊▉█".to_string(),
+        Charset::ShadeBlocks => " ░▒▓█".to_string(),
         Charset::Custom => args.custom_chars.unwrap_or_else(|| {
-            eprintln!("Custom chars must be specified when using the --charset custom option.");
-            std::process::exit(1);
-        }),
+                eprintln!("Custom chars must be specified when using the --charset custom option.");
+                std::process::exit(1);
+            }),
     }
     .chars()
     .collect();
