@@ -107,6 +107,10 @@ struct Args {
     #[arg(long, help = "Auto-fit to terminal width (overrides --width)")]
     fit: bool,
 
+    /// Exact output height in characters (overrides aspect ratio calculation)
+    #[arg(long, help = "Exact output height in characters (overrides aspect ratio)")]
+    height: Option<u32>,
+
     /// Output file (omit for stdout)
     #[arg(long, short = 'o', help = "Output file (omit for stdout)")]
     output: Option<String>,
@@ -172,8 +176,13 @@ fn main() {
             args.width
         };
 
-        let (new_width, new_height) =
-            calculate_output_dimensions(width, height, target_width, args.aspect_ratio);
+        let (new_width, new_height) = if let Some(h) = args.height {
+            // User specified exact height, ignore aspect ratio
+            (target_width, h)
+        } else {
+            // Calculate height based on aspect ratio (current behavior)
+            calculate_output_dimensions(width, height, target_width, args.aspect_ratio)
+        };
         let img = img.resize_exact(new_width, new_height, image::imageops::FilterType::Lanczos3);
 
         // Create writer for either file or stdout
