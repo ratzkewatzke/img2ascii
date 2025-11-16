@@ -13,10 +13,12 @@ enum Charset {
     Custom,
 }
 
-enum RenderMode {
+#[derive(Clone, Debug, ValueEnum)]
+enum RenderStyle {
     Grayscale,
     Color,
     Background,
+    HalfBlock,
 }
 
 fn calculate_brightness(pixel: &image::Rgba<u8>) -> f32 {
@@ -43,21 +45,39 @@ fn render_pixel(
     writer: &mut impl Write,
     pixel: &image::Rgba<u8>,
     character: char,
-    mode: &RenderMode,
+    style: &RenderStyle,
 ) -> std::io::Result<()> {
-    match mode {
-        RenderMode::Grayscale => write!(writer, "{}", character),
-        RenderMode::Color => write!(
+    match style {
+        RenderStyle::Grayscale => write!(writer, "{}", character),
+        RenderStyle::Color => write!(
             writer,
             "\x1b[38;2;{};{};{}m{}\x1b[0m",
             pixel[0], pixel[1], pixel[2], character
         ),
-        RenderMode::Background => write!(
+        RenderStyle::Background => write!(
             writer,
             "\x1b[48;2;{};{};{}m \x1b[0m",
             pixel[0], pixel[1], pixel[2]
         ),
+        RenderStyle::HalfBlock => {
+            // This shouldn't be called in HalfBlock mode - handled separately
+            Ok(())
+        }
     }
+}
+
+fn render_half_block(
+    writer: &mut impl Write,
+    top_pixel: &image::Rgba<u8>,
+    bottom_pixel: &image::Rgba<u8>,
+) -> std::io::Result<()> {
+    // Use ▀ (upper half block) with top color as foreground, bottom as background
+    write!(
+        writer,
+        "\x1b[38;2;{};{};{}m\x1b[48;2;{};{};{}m▀\x1b[0m",
+        top_pixel[0], top_pixel[1], top_pixel[2],
+        bottom_pixel[0], bottom_pixel[1], bottom_pixel[2]
+    )
 }
 
 #[derive(Parser)]
@@ -80,16 +100,9 @@ struct Args {
     #[arg(long, default_value = None, help = "Custom character set (required when --charset custom)")]
     custom_chars: Option<String>,
 
-    /// Whether or not you want color (we do our best)
-    #[arg(long, help = "Enable colored output")]
-    color: bool,
-
-    /// Use background colors with block characters for higher fidelity
-    #[arg(
-        long,
-        help = "Use background colors instead of foreground (implies --color)"
-    )]
-    background: bool,
+    /// Rendering style
+    #[arg(long, value_enum, default_value_t = RenderStyle::Grayscale, help = "Rendering style")]
+    style: RenderStyle,
 
     /// Inverting the characters may make it pop more on dark-on-light.
     #[arg(long, help = "Invert the density of the characters")]
@@ -181,7 +194,13 @@ fn main() {
             (target_width, h)
         } else {
             // Calculate height based on aspect ratio (current behavior)
-            calculate_output_dimensions(width, height, target_width, args.aspect_ratio)
+            let (w, h) = calculate_output_dimensions(width, height, target_width, args.aspect_ratio);
+            // Double height for half-block mode (2 pixels per character)
+            if matches!(args.style, RenderStyle::HalfBlock) {
+                (w, h * 2)
+            } else {
+                (w, h)
+            }
         };
         let img = img.resize_exact(new_width, new_height, image::imageops::FilterType::Lanczos3);
 
@@ -202,70 +221,77 @@ fn main() {
         // For dithering, we need to maintain error buffers for current and next row. This is
         // the old circular buffer trick where your next line is whatever the opposite parity
         // of yours is, mod 2.
-        let mut error_buffer: Vec<Vec<f32>> = if args.dither && !args.background {
+        let mut error_buffer: Vec<Vec<f32>> = if args.dither && matches!(args.style, RenderStyle::Grayscale) {
             vec![vec![0.0; img.width() as usize]; 2]
         } else {
             vec![]
         };
 
-        // Determine render mode
-        let render_mode = if args.background {
-            RenderMode::Background
-        } else if args.color {
-            RenderMode::Color
-        } else {
-            RenderMode::Grayscale
-        };
-
         for y in 0..img.height() {
+            // Skip odd rows in half-block mode (we process 2 rows at a time)
+            if matches!(args.style, RenderStyle::HalfBlock) && y % 2 == 1 {
+                continue;
+            }
+
             for x in 0..img.width() {
-                let pixel = img.get_pixel(x, y);
+                if matches!(args.style, RenderStyle::HalfBlock) {
+                    // Process two vertical pixels as one character
+                    let top_pixel = img.get_pixel(x, y);
+                    let bottom_pixel = if y + 1 < img.height() {
+                        img.get_pixel(x, y + 1)
+                    } else {
+                        top_pixel // Use top pixel if we're at the last row
+                    };
+                    render_half_block(&mut writer, &top_pixel, &bottom_pixel).unwrap();
+                } else {
+                    let pixel = img.get_pixel(x, y);
 
-                let mut brightness = calculate_brightness(&pixel);
+                    let mut brightness = calculate_brightness(&pixel);
 
-                // Apply dithering error if enabled.
-                if args.dither && !args.background {
-                    let current_row = (y % 2) as usize;
-                    brightness += error_buffer[current_row][x as usize];
-                    brightness = brightness.clamp(0.0, 255.0);
-                }
-
-                let idx = brightness_to_index(brightness, working_char_len);
-                let character = working_chars[idx];
-
-                render_pixel(&mut writer, &pixel, character, &render_mode).unwrap();
-
-                // If we're dithering, we need to push the error to the other squares.
-                if args.dither && !args.background {
-                    // Calculate the brightness that the chosen character represents
-                    let char_brightness = (idx as f32 * 255.0) / (working_char_len - 1) as f32;
-                    let error = brightness - char_brightness;
-
-                    let current_row = (y % 2) as usize;
-                    let next_row = ((y + 1) % 2) as usize;
-                    let x_usize = x as usize;
-
-                    // Distribute error to neighboring pixels. I stole this from Wikipedia:
-                    // https://en.wikipedia.org/wiki/Floyd%E2%80%93Steinberg_dithering
-                    //        X   7/16
-                    //  3/16 5/16 1/16
-                    if x + 1 < img.width() {
-                        error_buffer[current_row][x_usize + 1] += error * 7.0 / 16.0;
+                    // Apply dithering error if enabled.
+                    if args.dither && matches!(args.style, RenderStyle::Grayscale) {
+                        let current_row = (y % 2) as usize;
+                        brightness += error_buffer[current_row][x as usize];
+                        brightness = brightness.clamp(0.0, 255.0);
                     }
-                    if y + 1 < img.height() {
-                        if x > 0 {
-                            error_buffer[next_row][x_usize - 1] += error * 3.0 / 16.0;
-                        }
-                        error_buffer[next_row][x_usize] += error * 5.0 / 16.0;
+
+                    let idx = brightness_to_index(brightness, working_char_len);
+                    let character = working_chars[idx];
+
+                    render_pixel(&mut writer, &pixel, character, &args.style).unwrap();
+
+                    // If we're dithering, we need to push the error to the other squares.
+                    if args.dither && matches!(args.style, RenderStyle::Grayscale) {
+                        // Calculate the brightness that the chosen character represents
+                        let char_brightness = (idx as f32 * 255.0) / (working_char_len - 1) as f32;
+                        let error = brightness - char_brightness;
+
+                        let current_row = (y % 2) as usize;
+                        let next_row = ((y + 1) % 2) as usize;
+                        let x_usize = x as usize;
+
+                        // Distribute error to neighboring pixels. I stole this from Wikipedia:
+                        // https://en.wikipedia.org/wiki/Floyd%E2%80%93Steinberg_dithering
+                        //        X   7/16
+                        //  3/16 5/16 1/16
                         if x + 1 < img.width() {
-                            error_buffer[next_row][x_usize + 1] += error * 1.0 / 16.0;
+                            error_buffer[current_row][x_usize + 1] += error * 7.0 / 16.0;
+                        }
+                        if y + 1 < img.height() {
+                            if x > 0 {
+                                error_buffer[next_row][x_usize - 1] += error * 3.0 / 16.0;
+                            }
+                            error_buffer[next_row][x_usize] += error * 5.0 / 16.0;
+                            if x + 1 < img.width() {
+                                error_buffer[next_row][x_usize + 1] += error * 1.0 / 16.0;
+                            }
                         }
                     }
                 }
             }
 
             // Clear current row's error buffer for next iteration
-            if args.dither && !args.background {
+            if args.dither && matches!(args.style, RenderStyle::Grayscale) {
                 let current_row = (y % 2) as usize;
                 error_buffer[current_row].fill(0.0);
             }
