@@ -41,6 +41,42 @@ fn calculate_output_dimensions(
     (target_width, new_height as u32)
 }
 
+fn preprocess_image(
+    img: image::DynamicImage,
+    rotate: Option<u16>,
+    blur: Option<f32>,
+    sharpen: Option<f32>,
+) -> image::DynamicImage {
+    // Apply rotation if specified
+    let img = if let Some(degrees) = rotate {
+        match degrees {
+            90 => img.rotate90(),
+            180 => img.rotate180(),
+            270 => img.rotate270(),
+            _ => {
+                eprintln!("Error: --rotate must be 90, 180, or 270");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        img
+    };
+
+    // Apply blur if specified
+    let img = if let Some(sigma) = blur {
+        img.blur(sigma)
+    } else {
+        img
+    };
+
+    // Apply sharpen if specified
+    if let Some(amount) = sharpen {
+        img.unsharpen(amount, 2)
+    } else {
+        img
+    }
+}
+
 fn render_pixel(
     writer: &mut impl Write,
     pixel: &image::Rgba<u8>,
@@ -75,8 +111,7 @@ fn render_half_block(
     write!(
         writer,
         "\x1b[38;2;{};{};{}m\x1b[48;2;{};{};{}m▀\x1b[0m",
-        top_pixel[0], top_pixel[1], top_pixel[2],
-        bottom_pixel[0], bottom_pixel[1], bottom_pixel[2]
+        top_pixel[0], top_pixel[1], top_pixel[2], bottom_pixel[0], bottom_pixel[1], bottom_pixel[2]
     )
 }
 
@@ -88,9 +123,9 @@ struct Args {
     #[arg(help = "Path to the image file (omit to read from stdin)")]
     file: Option<String>,
 
-    /// Width of the ascii image
-    #[arg(long, default_value = "80", help = "Width of the output in characters")]
-    width: u32,
+    /// Width of output in characters (or 'fit' for terminal width)
+    #[arg(long, default_value = "80", help = "Width in characters (or 'fit' for terminal width)")]
+    width: String,
 
     /// Character set
     #[arg(long, value_enum, default_value_t = Charset::Short, help = "Character set to use")]
@@ -116,12 +151,11 @@ struct Args {
     )]
     aspect_ratio: f32,
 
-    /// Auto-fit to terminal width
-    #[arg(long, help = "Auto-fit to terminal width (overrides --width)")]
-    fit: bool,
-
     /// Exact output height in characters (overrides aspect ratio calculation)
-    #[arg(long, help = "Exact output height in characters (overrides aspect ratio)")]
+    #[arg(
+        long,
+        help = "Exact output height in characters (overrides aspect ratio)"
+    )]
     height: Option<u32>,
 
     /// Output file (omit for stdout)
@@ -131,6 +165,18 @@ struct Args {
     /// Apply Floyd-Steinberg dithering for smoother gradients
     #[arg(long, help = "Apply Floyd-Steinberg dithering (grayscale only)")]
     dither: bool,
+
+    /// Rotate image (90, 180, or 270 degrees clockwise)
+    #[arg(long, help = "Rotate image (90, 180, or 270 degrees clockwise)")]
+    rotate: Option<u16>,
+
+    /// Blur sigma (higher = more blur)
+    #[arg(long, help = "Blur sigma (0.0 = none. Reasonable values: 1.0-5.0)")]
+    blur: Option<f32>,
+
+    /// Sharpen amount (higher = more sharpen)
+    #[arg(long, help = "Sharpen amount (0.0 = none. Reasonable values: 1.0-3.0)")]
+    sharpen: Option<f32>,
 }
 
 fn main() {
@@ -175,18 +221,23 @@ fn main() {
     };
 
     if let Ok(img) = img_result {
+        let img = preprocess_image(img, args.rotate, args.blur, args.sharpen);
+
         let (width, height) = img.dimensions();
 
-        // Determine output width: use terminal width if --fit, otherwise use --width
-        let target_width = if args.fit {
+        // Determine output width: parse 'fit' or numeric value
+        let target_width = if args.width == "fit" {
             if let Some((terminal_size::Width(w), _)) = terminal_size::terminal_size() {
                 (w as u32).saturating_sub(1) // Leave 1 char margin to avoid wrapping
             } else {
-                eprintln!("Warning: Could not detect terminal size. Using default width");
-                args.width
+                eprintln!("Warning: Could not detect terminal size. Using 80");
+                80
             }
         } else {
-            args.width
+            args.width.parse::<u32>().unwrap_or_else(|_| {
+                eprintln!("Error: --width must be a number or 'fit'");
+                std::process::exit(1);
+            })
         };
 
         let (new_width, new_height) = if let Some(h) = args.height {
@@ -194,7 +245,8 @@ fn main() {
             (target_width, h)
         } else {
             // Calculate height based on aspect ratio (current behavior)
-            let (w, h) = calculate_output_dimensions(width, height, target_width, args.aspect_ratio);
+            let (w, h) =
+                calculate_output_dimensions(width, height, target_width, args.aspect_ratio);
             // Double height for half-block mode (2 pixels per character)
             if matches!(args.style, RenderStyle::HalfBlock) {
                 (w, h * 2)
@@ -221,11 +273,12 @@ fn main() {
         // For dithering, we need to maintain error buffers for current and next row. This is
         // the old circular buffer trick where your next line is whatever the opposite parity
         // of yours is, mod 2.
-        let mut error_buffer: Vec<Vec<f32>> = if args.dither && matches!(args.style, RenderStyle::Grayscale) {
-            vec![vec![0.0; img.width() as usize]; 2]
-        } else {
-            vec![]
-        };
+        let mut error_buffer: Vec<Vec<f32>> =
+            if args.dither && matches!(args.style, RenderStyle::Grayscale) {
+                vec![vec![0.0; img.width() as usize]; 2]
+            } else {
+                vec![]
+            };
 
         for y in 0..img.height() {
             // Skip odd rows in half-block mode (we process 2 rows at a time)
