@@ -238,18 +238,25 @@ fn main() {
     };
 
     if let Ok(img) = img_result {
-        let img = preprocess_image(img, args.rotate, args.blur, args.sharpen, args.flip_h, args.flip_v);
+        let img = preprocess_image(
+            img,
+            args.rotate,
+            args.blur,
+            args.sharpen,
+            args.flip_h,
+            args.flip_v,
+        );
 
         let mut working_chars: Vec<_> = match args.charset {
-            Charset::Short => " .:-=+#%@".to_string(),
-            Charset::Long => {
-                " .'^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$".to_string()
-            }
+            Charset::Short => " .:-=+#%&@".to_string(),
+            Charset::Long => 
+                " .'^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$".to_string(),
+            
             Charset::Braille => {
                 "⠀⠁⠂⠄⠈⠐⠠⡀⢀⣀⠃⠅⠆⠉⠊⠌⠑⠒⠔⠘⠡⠢⠤⠨⠰⡁⡂⡄⡈⡐⡠⢁⢂⢄⢈⢐⢠⣁⣂⣄⣈⣐⣠⠇⠋⠍⠎⠓⠕⠖⠙⠚⠜⠣⠥⠦⠩⠪⠬⠱⠲⠴⠸⡃⡅⡆⡉⡊⡌⡑⡒⡔⡘⡡⡢⡤⡨⡰⢃⢅⢆⢉⢊⢌⢑⢒⢔⢘⢡⢢⢤⢨⢰⣃⣅⣆⣉⣊⣌⣑⣒⣔⣘⣡⣢⣤⣨⣰⠏⠗⠛⠝⠞⠫⠭⠮⠳⠵⠶⠹⠺⠼⡇⡋⡍⡎⡓⡕⡖⡙⡚⡜⡣⡥⡦⡩⡪⡬⡱⡲⡴⡸⢇⢋⢍⢎⢓⢕⢖⢙⢚⢜⢣⢥⢦⢩⢪⢬⢱⢲⢴⢸⣇⣋⣍⣎⣓⣕⣖⣙⣚⣜⣣⣥⣦⣩⣪⣬⣱⣲⣴⣸⠟⠯⠷⠻⠽⠾⡏⡗⡛⡝⡞⡫⡭⡮⡳⡵⡶⡹⡺⡼⢏⢗⢛⢝⢞⢫⢭⢮⢳⢵⢶⢹⢺⢼⣏⣗⣛⣝⣞⣫⣭⣮⣳⣵⣶⣹⣺⣼⠿⡟⡯⡷⡻⡽⡾⢟⢯⢷⢻⢽⢾⣟⣯⣷⣻⣽⣾⡿⢿⣿".to_string()
             }
             Charset::VerticalBlocks => " ▁▂▃▄▅▆▇█".to_string(),
-            Charset::VerticalHorizontalBlocks => " ▁▂▃▄▅▆▇▏▎▍▌▋▊▉█".to_string(),
+            Charset::VerticalHorizontalBlocks => " ▏▁▎▂▍▃▌▄▋▅▊▆▉▇█".to_string(),
             Charset::ShadeBlocks => " ░▒▓█".to_string(),
             Charset::Custom => args.custom_chars.unwrap_or_else(|| {
                 eprintln!("Custom chars must be specified when using the --charset custom option.");
