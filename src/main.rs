@@ -2,6 +2,10 @@ use clap::{Parser, ValueEnum};
 use image::GenericImageView;
 use std::io::{BufWriter, Read, Write};
 
+// ============================================================================
+// CLI Configuration
+// ============================================================================
+
 #[derive(Clone, Debug, ValueEnum)]
 enum Charset {
     Short,
@@ -20,6 +24,87 @@ enum RenderStyle {
     Background,
     HalfBlock,
 }
+
+#[derive(Parser)]
+#[command(name = "img2ascii")]
+#[command(about = "Convert images to ASCII")]
+struct Args {
+    /// Path to the image file (omit to read from stdin)
+    #[arg(help = "Path to the image file (omit to read from stdin)")]
+    file: Option<String>,
+
+    /// Width of output in characters (or 'fit' for terminal width)
+    #[arg(
+        long,
+        short = 'w',
+        default_value = "80",
+        help = "Width in characters (or 'fit' for terminal width)"
+    )]
+    width: String,
+
+    /// Character set
+    #[arg(long, short = 'c', value_enum, default_value_t = Charset::Short, help = "Character set to use")]
+    charset: Charset,
+
+    /// Custom chars (only read if --charset custom is chosen)
+    #[arg(long, default_value = None, help = "Custom character set (required when --charset custom)")]
+    custom_chars: Option<String>,
+
+    /// Rendering style
+    #[arg(long, short = 's', value_enum, default_value_t = RenderStyle::Grayscale, help = "Rendering style")]
+    style: RenderStyle,
+
+    /// Inverting the characters may make it pop more on dark-on-light.
+    #[arg(long, help = "Invert the density of the characters")]
+    invert: bool,
+
+    /// Character aspect ratio (height/width)
+    #[arg(
+        long,
+        default_value = "2.1",
+        help = "Character aspect ratio (height/width)"
+    )]
+    aspect_ratio: f32,
+
+    /// Exact output height in characters (overrides aspect ratio calculation)
+    #[arg(
+        long,
+        help = "Exact output height in characters (overrides aspect ratio)"
+    )]
+    height: Option<u32>,
+
+    /// Output file (omit for stdout)
+    #[arg(long, short = 'o', help = "Output file (omit for stdout)")]
+    output: Option<String>,
+
+    /// Apply Floyd-Steinberg dithering for smoother gradients
+    #[arg(long, help = "Apply Floyd-Steinberg dithering (grayscale only)")]
+    dither: bool,
+
+    /// Rotate image (90, 180, or 270 degrees clockwise)
+    #[arg(long, help = "Rotate image (90, 180, or 270 degrees clockwise)")]
+    rotate: Option<u16>,
+
+    /// Blur sigma (higher = more blur)
+    #[arg(long, help = "Blur sigma (0.0 = none. Reasonable values: 1.0-5.0)")]
+    blur: Option<f32>,
+
+    /// Sharpen amount (higher = more sharpen)
+    #[arg(long, help = "Sharpen amount (0.0 = none. Reasonable values: 1.0-3.0)")]
+    sharpen: Option<f32>,
+
+    /// Flip image horizontally
+    #[arg(long, help = "Flip image horizontally")]
+    flip_h: bool,
+
+    /// Flip image vertically
+    #[arg(long, help = "Flip image vertically")]
+    flip_v: bool,
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
 
 fn calculate_brightness(pixel: &image::Rgba<u8>) -> f32 {
     // Use perceptual brightness (ITU-R BT.601 luma) instead of simple average.
@@ -41,11 +126,14 @@ fn calculate_output_dimensions(
     (target_width, new_height as u32)
 }
 
+// I mean, it would be churlish not to take advantage of this crate.
 fn preprocess_image(
     img: image::DynamicImage,
     rotate: Option<u16>,
     blur: Option<f32>,
     sharpen: Option<f32>,
+    flip_h: bool,
+    flip_v: bool,
 ) -> image::DynamicImage {
     // Apply rotation if specified
     let img = if let Some(degrees) = rotate {
@@ -61,6 +149,12 @@ fn preprocess_image(
     } else {
         img
     };
+
+    // Apply horizontal flip if specified
+    let img = if flip_h { img.fliph() } else { img };
+
+    // Apply vertical flip if specified
+    let img = if flip_v { img.flipv() } else { img };
 
     // Apply blur if specified
     let img = if let Some(sigma) = blur {
@@ -115,99 +209,22 @@ fn render_half_block(
     )
 }
 
-#[derive(Parser)]
-#[command(name = "img2ascii")]
-#[command(about = "Convert images to ASCII")]
-struct Args {
-    /// Path to the image file (omit to read from stdin)
-    #[arg(help = "Path to the image file (omit to read from stdin)")]
-    file: Option<String>,
-
-    /// Width of output in characters (or 'fit' for terminal width)
-    #[arg(long, default_value = "80", help = "Width in characters (or 'fit' for terminal width)")]
-    width: String,
-
-    /// Character set
-    #[arg(long, value_enum, default_value_t = Charset::Short, help = "Character set to use")]
-    charset: Charset,
-
-    /// Custom chars (only read if --charset custom is chosen)
-    #[arg(long, default_value = None, help = "Custom character set (required when --charset custom)")]
-    custom_chars: Option<String>,
-
-    /// Rendering style
-    #[arg(long, value_enum, default_value_t = RenderStyle::Grayscale, help = "Rendering style")]
-    style: RenderStyle,
-
-    /// Inverting the characters may make it pop more on dark-on-light.
-    #[arg(long, help = "Invert the density of the characters")]
-    invert: bool,
-
-    /// Character aspect ratio (height/width)
-    #[arg(
-        long,
-        default_value = "2.1",
-        help = "Character aspect ratio (height/width)"
-    )]
-    aspect_ratio: f32,
-
-    /// Exact output height in characters (overrides aspect ratio calculation)
-    #[arg(
-        long,
-        help = "Exact output height in characters (overrides aspect ratio)"
-    )]
-    height: Option<u32>,
-
-    /// Output file (omit for stdout)
-    #[arg(long, short = 'o', help = "Output file (omit for stdout)")]
-    output: Option<String>,
-
-    /// Apply Floyd-Steinberg dithering for smoother gradients
-    #[arg(long, help = "Apply Floyd-Steinberg dithering (grayscale only)")]
-    dither: bool,
-
-    /// Rotate image (90, 180, or 270 degrees clockwise)
-    #[arg(long, help = "Rotate image (90, 180, or 270 degrees clockwise)")]
-    rotate: Option<u16>,
-
-    /// Blur sigma (higher = more blur)
-    #[arg(long, help = "Blur sigma (0.0 = none. Reasonable values: 1.0-5.0)")]
-    blur: Option<f32>,
-
-    /// Sharpen amount (higher = more sharpen)
-    #[arg(long, help = "Sharpen amount (0.0 = none. Reasonable values: 1.0-3.0)")]
-    sharpen: Option<f32>,
-}
+// ============================================================================
+// Main
+// ============================================================================
 
 fn main() {
     let args = Args::parse();
 
-    let mut working_chars: Vec<_> = match args.charset {
-        Charset::Short => " .:-=+#%@".to_string(),
-        Charset::Long => {
-                " .'^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$".to_string()
-            }
-        Charset::Braille => {
-                "⠀⠁⠂⠄⠈⠐⠠⡀⢀⣀⠃⠅⠆⠉⠊⠌⠑⠒⠔⠘⠡⠢⠤⠨⠰⡁⡂⡄⡈⡐⡠⢁⢂⢄⢈⢐⢠⣁⣂⣄⣈⣐⣠⠇⠋⠍⠎⠓⠕⠖⠙⠚⠜⠣⠥⠦⠩⠪⠬⠱⠲⠴⠸⡃⡅⡆⡉⡊⡌⡑⡒⡔⡘⡡⡢⡤⡨⡰⢃⢅⢆⢉⢊⢌⢑⢒⢔⢘⢡⢢⢤⢨⢰⣃⣅⣆⣉⣊⣌⣑⣒⣔⣘⣡⣢⣤⣨⣰⠏⠗⠛⠝⠞⠫⠭⠮⠳⠵⠶⠹⠺⠼⡇⡋⡍⡎⡓⡕⡖⡙⡚⡜⡣⡥⡦⡩⡪⡬⡱⡲⡴⡸⢇⢋⢍⢎⢓⢕⢖⢙⢚⢜⢣⢥⢦⢩⢪⢬⢱⢲⢴⢸⣇⣋⣍⣎⣓⣕⣖⣙⣚⣜⣣⣥⣦⣩⣪⣬⣱⣲⣴⣸⠟⠯⠷⠻⠽⠾⡏⡗⡛⡝⡞⡫⡭⡮⡳⡵⡶⡹⡺⡼⢏⢗⢛⢝⢞⢫⢭⢮⢳⢵⢶⢹⢺⢼⣏⣗⣛⣝⣞⣫⣭⣮⣳⣵⣶⣹⣺⣼⠿⡟⡯⡷⡻⡽⡾⢟⢯⢷⢻⢽⢾⣟⣯⣷⣻⣽⣾⡿⢿⣿".to_string()
-            }
-        Charset::VerticalBlocks => " ▁▂▃▄▅▆▇█".to_string(),
-        Charset::VerticalHorizontalBlocks => " ▁▂▃▄▅▆▇▏▎▍▌▋▊▉█".to_string(),
-        Charset::ShadeBlocks => " ░▒▓█".to_string(),
-        Charset::Custom => args.custom_chars.unwrap_or_else(|| {
-                eprintln!("Custom chars must be specified when using the --charset custom option.");
-                std::process::exit(1);
-            }),
-    }
-    .chars()
-    .collect();
-    let working_char_len = working_chars.len();
-
-    if args.invert {
-        working_chars.reverse();
-    }
-
     let img_result = match args.file {
-        Some(path) => image::open(path),
+        Some(ref path) => {
+            // Validate file exists before trying to open
+            if !std::path::Path::new(path).exists() {
+                eprintln!("Error: File '{}' not found", path);
+                std::process::exit(1);
+            }
+            image::open(path)
+        }
         None => {
             let mut buffer = Vec::new();
             match std::io::stdin().read_to_end(&mut buffer) {
@@ -221,7 +238,31 @@ fn main() {
     };
 
     if let Ok(img) = img_result {
-        let img = preprocess_image(img, args.rotate, args.blur, args.sharpen);
+        let img = preprocess_image(img, args.rotate, args.blur, args.sharpen, args.flip_h, args.flip_v);
+
+        let mut working_chars: Vec<_> = match args.charset {
+            Charset::Short => " .:-=+#%@".to_string(),
+            Charset::Long => {
+                " .'^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$".to_string()
+            }
+            Charset::Braille => {
+                "⠀⠁⠂⠄⠈⠐⠠⡀⢀⣀⠃⠅⠆⠉⠊⠌⠑⠒⠔⠘⠡⠢⠤⠨⠰⡁⡂⡄⡈⡐⡠⢁⢂⢄⢈⢐⢠⣁⣂⣄⣈⣐⣠⠇⠋⠍⠎⠓⠕⠖⠙⠚⠜⠣⠥⠦⠩⠪⠬⠱⠲⠴⠸⡃⡅⡆⡉⡊⡌⡑⡒⡔⡘⡡⡢⡤⡨⡰⢃⢅⢆⢉⢊⢌⢑⢒⢔⢘⢡⢢⢤⢨⢰⣃⣅⣆⣉⣊⣌⣑⣒⣔⣘⣡⣢⣤⣨⣰⠏⠗⠛⠝⠞⠫⠭⠮⠳⠵⠶⠹⠺⠼⡇⡋⡍⡎⡓⡕⡖⡙⡚⡜⡣⡥⡦⡩⡪⡬⡱⡲⡴⡸⢇⢋⢍⢎⢓⢕⢖⢙⢚⢜⢣⢥⢦⢩⢪⢬⢱⢲⢴⢸⣇⣋⣍⣎⣓⣕⣖⣙⣚⣜⣣⣥⣦⣩⣪⣬⣱⣲⣴⣸⠟⠯⠷⠻⠽⠾⡏⡗⡛⡝⡞⡫⡭⡮⡳⡵⡶⡹⡺⡼⢏⢗⢛⢝⢞⢫⢭⢮⢳⢵⢶⢹⢺⢼⣏⣗⣛⣝⣞⣫⣭⣮⣳⣵⣶⣹⣺⣼⠿⡟⡯⡷⡻⡽⡾⢟⢯⢷⢻⢽⢾⣟⣯⣷⣻⣽⣾⡿⢿⣿".to_string()
+            }
+            Charset::VerticalBlocks => " ▁▂▃▄▅▆▇█".to_string(),
+            Charset::VerticalHorizontalBlocks => " ▁▂▃▄▅▆▇▏▎▍▌▋▊▉█".to_string(),
+            Charset::ShadeBlocks => " ░▒▓█".to_string(),
+            Charset::Custom => args.custom_chars.unwrap_or_else(|| {
+                eprintln!("Custom chars must be specified when using the --charset custom option.");
+                std::process::exit(1);
+            }),
+        }
+        .chars()
+        .collect();
+        let working_char_len = working_chars.len();
+
+        if args.invert {
+            working_chars.reverse();
+        }
 
         let (width, height) = img.dimensions();
 
