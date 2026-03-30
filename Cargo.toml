@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1"
 clap = {version = "4.5.51", features = ["derive"]}
 image = "0.25.9"
 terminal_size = "0.4"
+ureq = "3"
